@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>운동화 파손 분석기</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --line: #e3e6ea;
+    --text: #1f2933;
+    --muted: #6b7684;
+    --accent: #2f6fed;
+    --bad: #c0392b;
+    --ok: #3f9142;
+    --bar: #d8dde3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --card: #1c2027; --line: #2c323b; --text: #e8ebef;
+      --muted: #9aa4b2; --accent: #5b8def; --bar: #2c323b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 64px;
+    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: .9rem; margin: 0 0 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 1rem; margin: 0 0 12px; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: .95rem; font-family: inherit;
+  }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 180px; }
+  button {
+    padding: 9px 16px; border: 0; border-radius: 8px; background: var(--accent);
+    color: #fff; font-size: .95rem; font-family: inherit; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  #drop {
+    border: 2px dashed var(--line); border-radius: 12px; padding: 32px 16px;
+    text-align: center; color: var(--muted); cursor: pointer;
+  }
+  #drop.over { border-color: var(--accent); color: var(--accent); }
+  #preview { max-width: 100%; max-height: 280px; border-radius: 8px; display: block; margin: 12px auto 0; }
+  .status { font-size: .88rem; margin-top: 10px; }
+  .status.err { color: var(--bad); }
+  .status.ok { color: var(--ok); }
+  .summary { font-size: 1.05rem; font-weight: 600; margin: 0 0 14px; }
+  .item { margin-bottom: 12px; }
+  .item .top { display: flex; justify-content: space-between; gap: 12px; font-size: .92rem; }
+  .item .name { font-weight: 600; }
+  .item .meta { color: var(--muted); font-size: .85rem; }
+  .track { height: 8px; border-radius: 4px; background: var(--bar); margin-top: 5px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 4px; background: var(--ok); }
+  .fill.bad { background: var(--bad); }
+  .tag { font-size: .78rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .tag.bad { color: var(--bad); border-color: var(--bad); }
+  .note { font-size: .82rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; margin-top: 4px; }
+  code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>👟 운동화 파손 부위 분석기</h1>
+  <p class="sub">운동화 사진을 올리면 밑창(Outsole)과 뒤꿈치 안감(Heel Lining) 파손 여부를 분석합니다.</p>
+
+  <div class="card">
+    <h2>1. 서버 연결</h2>
+    <label for="api">API 주소 (코랩에서 띄운 ngrok 주소를 넣어주세요)</label>
+    <div class="row">
+      <input type="text" id="api" placeholder="https://xxxx-xxxx.ngrok-free.dev" style="flex:3 1 320px">
+      <button class="ghost" id="check" style="flex:0 0 auto">연결 확인</button>
+    </div>
+    <div class="status" id="apiStatus">대기 중...</div>
+  </div>
+
+  <div class="card">
+    <h2>2. 사진 올리기</h2>
+    <div id="drop">여기를 누르거나 사진을 끌어다 놓으세요</div>
+    <input type="file" id="file" accept="image/*" hidden>
+    <img id="preview" alt="" hidden>
+    <div class="status" id="upStatus"></div>
+  </div>
+
+  <div class="card" id="resultCard" hidden>
+    <h2>3. 분석 결과</h2>
+    <p class="summary" id="summary"></p>
+    <div id="list"></div>
+    <img id="resultImage" alt="YOLO 결과" style="max-width: 100%; border-radius: 8px; margin-top: 12px;" hidden>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const HEADERS = { 'ngrok-skip-browser-warning': 'true' };
+
+function apiBase() {
+  return $('api').value.trim().replace(/\/+$/, '');
+}
+
+function setStatus(el, msg, kind) {
+  el.textContent = msg;
+  el.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+$('check').addEventListener('click', async () => {
+  const base = apiBase();
+  if (!base) { setStatus($('apiStatus'), 'API 주소를 넣어 주세요.', 'err'); return; }
+  setStatus($('apiStatus'), '연결 중…');
+  try {
+    const r = await fetch(base + '/health', { headers: HEADERS });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    setStatus($('apiStatus'), `연결 성공! (YOLO 모델 대기 중)`, 'ok');
+  } catch (e) {
+    setStatus($('apiStatus'), '연결 실패: ' + e.message, 'err');
+  }
+});
+
+$('drop').addEventListener('click', () => $('file').click());$('file').addEventListener('change', (e) => { if (e.target.files[0]) send(e.target.files[0]); });
+
+['dragenter', 'dragover'].forEach(ev => $('drop').addEventListener(ev, (e) => {
+  e.preventDefault(); $('drop').classList.add('over');
+}));
+['dragleave', 'drop'].forEach(ev => $('drop').addEventListener(ev, (e) => {
+  e.preventDefault(); $('drop').classList.remove('over');
+}));
+$('drop').addEventListener('drop', (e) => {
+  const f = e.dataTransfer.files[0];
+  if (f) send(f);
+});
+
+async function send(file) {
+  const base = apiBase();
+  if (!base) { setStatus($('upStatus'), 'API 주소를 먼저 넣어 주세요.', 'err'); return; }
+
+  $('preview').src = URL.createObjectURL(file);$('preview').hidden = false;
+  setStatus($('upStatus'), `${file.name} 분석 중…`);
+  $('resultCard').hidden = true;
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const r = await fetch(`${base}/predict`, { method: 'POST', body: form, headers: HEADERS });
+    const j = await r.json();
+    if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+    
+    // 분석 결과 렌더링
+    $('summary').textContent = `탐지된 부위: ${j.detections.length}개`;
+    $('list').innerHTML = j.detections.map(d => {
+      return `<div class="item">
+        <div class="top">
+          <span class="name">${d.class_name}</span>
+          <span><strong>${(d.confidence * 100).toFixed(1)}%</strong></span>
+        </div>
+        <div class="track"><div class="fill" style="width:${(d.confidence * 100).toFixed(1)}%"></div></div>
+      </div>`;
+    }).join('');
+
+    // 이미지가 base64로 오면 보여주기
+    if(j.image_base64) {
+        $('resultImage').src = "data:image/jpeg;base64," + j.image_base64;
+        $('resultImage').hidden = false;
+    }
+
+    $('resultCard').hidden = false;
+    setStatus($('upStatus'), `${file.name} — 분석 완료`, 'ok');
+  } catch (e) {
+    setStatus($('upStatus'), '분석 실패: ' + e.message, 'err');
+  }
+}
+</script>
+</body>
+</html>
